@@ -1,9 +1,13 @@
 import asyncio
+import hashlib
 import json
 import os
 import logging
+import re
 import time
+from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright, Page
 from bs4 import BeautifulSoup
 from openai import AsyncOpenAI
@@ -39,8 +43,12 @@ class WebScraper:
         self.user_data_dir = user_data_dir
         self.extension_path = extension_path
         self.extension_launch_flags = extension_launch_flags or []
-        self.temp_dir = "temp_screenshots"
-        os.makedirs(self.temp_dir, exist_ok=True)
+        self.temp_dir = Path("temp_screenshots")
+        self.temp_dir.mkdir(exist_ok=True)
+        self._clean_temp_dir()
+        self._playwright = None
+        self._browser = None
+        self._context = None
         
         # Setup Local LLM client (compatible with Ollama/LM Studio)
         self.llm_client = None
@@ -52,6 +60,94 @@ class WebScraper:
             )
         elif self.use_llm and not llm_base_url:
             logger.warning("use_llm is enabled but no LLM base URL provided; falling back to non-LLM extraction.")
+
+    async def __aenter__(self):
+        await self._ensure_context()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.close()
+
+    async def _ensure_context(self):
+        """
+        Lazily start Playwright and a browser context for reuse across URLs.
+        """
+        if self._context:
+            return
+
+        self._playwright = await async_playwright().start()
+        p = self._playwright
+        use_persistent = bool(self.user_data_dir)
+
+        extension_args: List[str] = []
+        if self.extension_path:
+            extension_args = [
+                f"--disable-extensions-except={self.extension_path}",
+                f"--load-extension={self.extension_path}",
+            ]
+
+        if use_persistent:
+            persistent_flags = (extension_args + self.extension_launch_flags) if extension_args else self.extension_launch_flags or []
+            if self.mask_automation and "--disable-blink-features=AutomationControlled" not in persistent_flags:
+                persistent_flags = persistent_flags + ["--disable-blink-features=AutomationControlled"]
+            self._context = await p.chromium.launch_persistent_context(
+                user_data_dir=self.user_data_dir,
+                headless=self.headless,
+                viewport={'width': 1280, 'height': 1024},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                args=persistent_flags or None
+            )
+        else:
+            flags = (extension_args or []) + self.extension_launch_flags
+            if self.mask_automation and "--disable-blink-features=AutomationControlled" not in flags:
+                flags = flags + ["--disable-blink-features=AutomationControlled"]
+            self._browser = await p.chromium.launch(headless=self.headless, args=flags or None)
+            self._context = await self._browser.new_context(
+                viewport={'width': 1280, 'height': 1024},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+
+        await self._apply_automation_mask(self._context)
+
+    async def close(self):
+        """
+        Closes browser/context/playwright if they were opened.
+        """
+        try:
+            if self._context:
+                await self._context.close()
+        finally:
+            self._context = None
+        try:
+            if self._browser:
+                await self._browser.close()
+        finally:
+            self._browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
+
+    def _clean_temp_dir(self):
+        """
+        Clear previous run artifacts to avoid disk buildup and stale screenshots.
+        """
+        try:
+            for child in self.temp_dir.iterdir():
+                if child.is_file():
+                    child.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning(f"Could not clean temp dir {self.temp_dir}: {exc}")
+
+    def _slugify_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        parts = [parsed.netloc or "", parsed.path or ""]
+        raw = "_".join(p.strip("/") for p in parts if p).strip("_")
+        raw = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-") or "page"
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
+        return f"{raw[:80]}-{digest}"
+
+    def _screenshot_path(self, url: str, prefix: str) -> Path:
+        return self.temp_dir / f"{prefix}_{self._slugify_url(url)}.png"
 
     async def _collect_text_blocks(self, page: Page) -> List[Dict[str, str]]:
         """
