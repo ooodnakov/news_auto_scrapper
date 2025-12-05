@@ -38,3 +38,4 @@ Outputs go to `OUTPUT_FILE` plus screenshots in `temp_screenshots/`.
 - Cookie banners: scraper tries a basic “Accept/Принять” click but some sites may still show overlays.
 - Telegram links: controlled by `INTERACT_WITH_TELEGRAM`; disable if you don’t want app switching.
 - A single browser/context is reused across URLs during a run; close happens automatically when the script exits.
+- Parser picks up hyperlinks embedded in DOCX (even if link text is not the raw URL) and handles multiple URLs on the same line.

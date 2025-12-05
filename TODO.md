@@ -5,4 +5,4 @@
 - [x] Browser reuse: reuse a single Playwright browser/context (or small pool) across URLs; avoid per-URL launch/teardown and repeated extension loading.
 - [x] Screenshots cleanup: generate stable screenshot names (uuid or url-safe slug) and clear/rotate `temp_screenshots` each run to prevent buildup and collisions.
 - Headless defaults: default to Playwright screenshots; gate PyAutoGUI mode behind an explicit flag for GUI environments.
-- Parser robustness: add parsing rules/tests that handle blank lines, multiple URLs, hyperlink runs, and clearer metadata markers instead of assuming two lines above a URL.
+- [x] Parser robustness: add parsing rules/tests that handle blank lines, multiple URLs, hyperlink runs, and clearer metadata markers instead of assuming two lines above a URL.
