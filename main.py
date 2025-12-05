@@ -157,7 +157,8 @@ async def main():
         sys.exit(0)
 
     # 2. Scrape Data (Screenshots + Text)
-    scraper = WebScraper(
+    processed_tasks = []
+    async with WebScraper(
         headless=args.headless,
         use_llm=args.use_local_llm,
         capture_with_pyautogui=args.use_pyautogui,
@@ -169,15 +170,13 @@ async def main():
         llm_base_url=args.llm_base_url,
         llm_api_key=args.llm_api_key,
         llm_timeout=args.llm_timeout,
-    )
-    processed_tasks = []
-
-    # Process sequentially to avoid rate limiting or memory explosion, 
-    # but scraping can be parallelized in chunks if needed.
-    for i, task in enumerate(tasks):
-        logger.info(f"[{i+1}/{len(tasks)}] Processing {task['source']}...")
-        result = await scraper.process_url(task)
-        processed_tasks.append(result)
+    ) as scraper:
+        # Process sequentially to avoid rate limiting or memory explosion, 
+        # but scraping can be parallelized in chunks if needed.
+        for i, task in enumerate(tasks):
+            logger.info(f"[{i+1}/{len(tasks)}] Processing {task['source']}...")
+            result = await scraper.process_url(task)
+            processed_tasks.append(result)
 
     # 3. Generate Report
     writer = ReportGenerator(args.output_file)
