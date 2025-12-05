@@ -30,8 +30,8 @@ class TaskParser:
         # Regex to identify URLs
         url_pattern = re.compile(r'https?://[^\s]+')
 
-        for text in self._iter_lines(doc):
-            if not text:
+        for text, inline_urls in self._iter_lines(doc):
+            if not text and not inline_urls:
                 continue
 
             if text == self.PAGE_BREAK_MARKER:
@@ -39,37 +39,41 @@ class TaskParser:
                 continue
 
             # Check if this line contains a URL
-            url_match = url_pattern.search(text)
-            
-            if url_match:
-                url = url_match.group(0)
-                # Clean URL: remove trailing punctuation that might have been captured
-                url = url.rstrip('.,;:)("\'')
-                
-                source = "Unknown Source"
-                date = "Unknown Date"
-                snippet_lines = [line for line in buffer if line != self.PAGE_BREAK_MARKER]
+            found_urls = []
+            if inline_urls:
+                found_urls.extend(inline_urls)
+            if text:
+                found_urls.extend(url_pattern.findall(text))
 
-                if snippet_lines:
-                    source = snippet_lines[0]
-                if len(snippet_lines) >= 2:
-                    date = snippet_lines[1]
-                body_lines = snippet_lines[2:]
-                snippet = "\n".join(body_lines) if body_lines else ""
-                buffer_snippet = snippet
+            if found_urls:
+                for url in found_urls:
+                    # Clean URL: remove trailing punctuation that might have been captured
+                    cleaned_url = url.rstrip('.,;:)("\'')
+                    
+                    source = "Unknown Source"
+                    date = "Unknown Date"
+                    snippet_lines = [line for line in buffer if line != self.PAGE_BREAK_MARKER]
 
-                logger.debug(f"Found task: {source} - {url}")
+                    if snippet_lines:
+                        source = snippet_lines[0]
+                    if len(snippet_lines) >= 2:
+                        date = snippet_lines[1]
+                    body_lines = snippet_lines[2:]
+                    snippet = "\n".join(body_lines) if body_lines else ""
+                    buffer_snippet = snippet
 
-                tasks.append({
-                    "source": source,
-                    "date": date,
-                    "title": None,
-                    "url": url,
-                    "snippet": buffer_snippet,
-                    "original_snippet": buffer_snippet
-                })
-                
-                # Clear buffer for the next entry
+                    logger.debug(f"Found task: {source} - {cleaned_url}")
+
+                    tasks.append({
+                        "source": source,
+                        "date": date,
+                        "title": None,
+                        "url": cleaned_url,
+                        "snippet": buffer_snippet,
+                        "original_snippet": buffer_snippet
+                    })
+                    
+                # Clear buffer for the next entry after processing all URLs in this line
                 buffer = []
             else:
                 buffer.append(text)
