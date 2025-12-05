@@ -21,7 +21,9 @@ class WebScraper:
         extension_path: Optional[str] = None,
         extension_launch_flags: Optional[List[str]] = None,
         mask_automation=True,
-        llm_base_url="http://26.156.206.109:1234/v1"
+        llm_base_url: Optional[str] = None,
+        llm_api_key: Optional[str] = None,
+        llm_timeout: float = 20.0,
     ):
         if capture_with_pyautogui and headless:
             logger.warning("PyAutoGUI screenshots require a visible browser; switching headless to False.")
@@ -41,11 +43,15 @@ class WebScraper:
         os.makedirs(self.temp_dir, exist_ok=True)
         
         # Setup Local LLM client (compatible with Ollama/LM Studio)
-        if self.use_llm:
+        self.llm_client = None
+        if self.use_llm and llm_base_url:
             self.llm_client = AsyncOpenAI(
                 base_url=llm_base_url,
-                api_key="sk-local-key" # Usually ignored by local LLMs
+                api_key=llm_api_key or "sk-local-key",
+                timeout=llm_timeout,
             )
+        elif self.use_llm and not llm_base_url:
+            logger.warning("use_llm is enabled but no LLM base URL provided; falling back to non-LLM extraction.")
 
     async def _collect_text_blocks(self, page: Page) -> List[Dict[str, str]]:
         """
@@ -144,6 +150,9 @@ class WebScraper:
         """
         if not blocks:
             return []
+        if not self.llm_client:
+            logger.debug("LLM client not configured; returning raw blocks.")
+            return [block["text"] for block in sorted(blocks, key=lambda b: len(b.get("text", "")), reverse=True)[:5]]
 
         sorted_blocks = sorted(blocks, key=lambda block: len(block.get("text", "")), reverse=True)
         preview_blocks = []
