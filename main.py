@@ -71,7 +71,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--extension-path", default=os.getenv("EXTENSION_PATH"), help="Path to unpacked Chromium extension")
     parser.add_argument("--extension-flag", dest="extension_flags", action="append", default=_env_list("EXTENSION_FLAGS"), help="Extra Chromium flags; can be passed multiple times")
     parser.add_argument("--headless", type=_str_to_bool, default=_env_bool("HEADLESS", True), help="Run browser headless (ignored if PyAutoGUI is enabled)")
-    parser.add_argument("--llm-base-url", default=os.getenv("LLM_BASE_URL"), help="Base URL for local LLM endpoint")
+    parser.add_argument("--llm-base-url", default=os.getenv("LLM_BASE_URL"), help="Base URL for local LLM endpoint (e.g., http://localhost:11434/v1)")
+    parser.add_argument("--llm-api-key", default=os.getenv("LLM_API_KEY"), help="API key for the LLM endpoint (optional for local)")
+    parser.add_argument("--llm-timeout", type=float, default=float(os.getenv("LLM_TIMEOUT", "20")), help="LLM request timeout in seconds")
 
     args = parser.parse_args()
 
@@ -93,6 +95,10 @@ def parse_args() -> argparse.Namespace:
     if args.use_pyautogui and args.headless:
         logger.warning("PyAutoGUI requires a visible browser; forcing headless=False.")
         args.headless = False
+
+    if args.use_local_llm and not args.llm_base_url:
+        args.llm_base_url = "http://localhost:11434/v1"
+        logger.info(f"use_local_llm enabled but no LLM base URL provided; defaulting to {args.llm_base_url}")
 
     return args
 
@@ -160,7 +166,9 @@ async def main():
         extension_path=args.extension_path,
         extension_launch_flags=args.extension_flags,
         mask_automation=True,
-        llm_base_url=args.llm_base_url or "http://26.156.206.109:1234/v1",
+        llm_base_url=args.llm_base_url,
+        llm_api_key=args.llm_api_key,
+        llm_timeout=args.llm_timeout,
     )
     processed_tasks = []
 
