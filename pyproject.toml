@@ -1,0 +1,19 @@
+[project]
+name = "news-scraper-task"
+version = "0.1.0"
+description = "Automated screenshotting and text extraction for news monitoring"
+requires-python = "==3.10.11"
+dependencies = [
+    "python-docx>=1.1.0",
+    "beautifulsoup4>=4.12.0",
+    "requests>=2.31.0",
+    "openai>=1.0.0", # Used for compatible Local LLM APIs (like Ollama)
+    "python-dotenv>=1.0.0",
+    "pyautogui>=0.9.54",
+    "pyscreeze>=1.0.1",
+    "Pillow>=10.0.1",
+    "playwright==1.38",
+]
+
+[tool.uv]
+dev-dependencies = []
