@@ -523,137 +523,100 @@ class WebScraper:
         Takes a task entry, visits URL, takes screenshot, extracts text.
         """
         url = entry['url']
-        screenshot_path = os.path.join(self.temp_dir, f"screen_{hash(url)}.png")
+        screenshot_path = self._screenshot_path(url, "screen")
         extracted_text = ""
         
         logger.info(f"🌍 Processing: {url}")
 
-        async with async_playwright() as p:
-            logger.debug("Launching browser...")
-            browser = None
-            context = None
-            page = None
-            use_persistent = bool(self.user_data_dir)
+        await self._ensure_context()
+        page = await self._context.new_page()
+        page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
+        
+        try:
+            # Go to page
+            logger.debug(f"Navigating to {url}")
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(2000) # Slight wait for dynamic content (VK/Dzen)
 
-            extension_args = []
-            if self.extension_path:
-                extension_args = [
-                    f"--disable-extensions-except={self.extension_path}",
-                    f"--load-extension={self.extension_path}",
-                ]
-
-            if use_persistent and self.user_data_dir:
-                persistent_flags = (extension_args + self.extension_launch_flags) if extension_args else self.extension_launch_flags or []
-                if self.mask_automation and "--disable-blink-features=AutomationControlled" not in persistent_flags:
-                    persistent_flags = persistent_flags + ["--disable-blink-features=AutomationControlled"]
-                context = await p.chromium.launch_persistent_context(
-                    user_data_dir=self.user_data_dir,
-                    headless=self.headless,
-                    viewport={'width': 1280, 'height': 1024},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    args=persistent_flags or None
-                )
-                page = context.pages[0] if context.pages else await context.new_page()
-            else:
-                flags = (extension_args or []) + self.extension_launch_flags
-                if self.mask_automation and "--disable-blink-features=AutomationControlled" not in flags:
-                    flags = flags + ["--disable-blink-features=AutomationControlled"]
-                browser = await p.chromium.launch(headless=self.headless, args=flags or None)
-                context = await browser.new_context(
-                    viewport={'width': 1280, 'height': 1024},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
-                page = await context.new_page()
-
-            await self._apply_automation_mask(context)
-
-            page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
-            
+            # --- Attempt to cleanup cookie banners (Simple heuristic) ---
             try:
-                # Go to page
-                logger.debug(f"Navigating to {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                await page.wait_for_timeout(2000) # Slight wait for dynamic content (VK/Dzen)
+                logger.debug("Attempting to close cookie banners...")
+                await page.evaluate("""() => {
+                    const buttons = Array.from(document.querySelectorAll('button, a'));
+                    const acceptBtn = buttons.find(b => b.innerText.toLowerCase().includes('accept') || b.innerText.toLowerCase().includes('принять'));
+                    if (acceptBtn) acceptBtn.click();
+                }""")
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
 
-                # --- Attempt to cleanup cookie banners (Simple heuristic) ---
-                try:
-                    logger.debug("Attempting to close cookie banners...")
-                    await page.evaluate("""() => {
-                        const buttons = Array.from(document.querySelectorAll('button, a'));
-                        const acceptBtn = buttons.find(b => b.innerText.toLowerCase().includes('accept') || b.innerText.toLowerCase().includes('принять'));
-                        if (acceptBtn) acceptBtn.click();
-                    }""")
-                    await page.wait_for_timeout(1000)
-                except Exception as e:
-                    pass
+            if self.interact_with_telegram:
+                await self._dismiss_telegram_prompt(page)
+            telegram_prompt_opened = False
+            if self.capture_with_pyautogui and self.interact_with_telegram:
+                telegram_prompt_opened = await self._click_open_in_telegram(page)
+                if telegram_prompt_opened:
+                    await page.wait_for_timeout(1500)
 
-                if self.interact_with_telegram:
-                    await self._dismiss_telegram_prompt(page)
-                telegram_prompt_opened = False
-                if self.capture_with_pyautogui and self.interact_with_telegram:
-                    telegram_prompt_opened = await self._click_open_in_telegram(page)
-                    if telegram_prompt_opened:
-                        await page.wait_for_timeout(1500)
-
-                # --- Screenshot ---
-                # We take a screenshot of the visible viewport (top of page with title/link)
-                logger.debug(f"Taking screenshot: {screenshot_path}")
-                await self._hide_automation_banner(page)
-                if self.capture_with_pyautogui:
-                    page_title = await page.title()
-                    if not self._capture_screen_with_pyautogui(screenshot_path, page_title):
-                        logger.debug("PyAutoGUI capture failed; falling back to Playwright viewport screenshot.")
-                        await page.screenshot(path=screenshot_path, full_page=False)
-                else:
+            # --- Screenshot ---
+            # We take a screenshot of the visible viewport (top of page with title/link)
+            logger.debug(f"Taking screenshot: {screenshot_path}")
+            await self._hide_automation_banner(page)
+            if self.capture_with_pyautogui:
+                page_title = await page.title()
+                if not self._capture_screen_with_pyautogui(screenshot_path, page_title):
+                    logger.debug("PyAutoGUI capture failed; falling back to Playwright viewport screenshot.")
                     await page.screenshot(path=screenshot_path, full_page=False)
-                await self._mask_screenshot_area(screenshot_path)
+            else:
+                await page.screenshot(path=screenshot_path, full_page=False)
+            await self._mask_screenshot_area(screenshot_path)
 
-                if self.capture_with_pyautogui and telegram_prompt_opened and self.interact_with_telegram:
-                    telegram_screenshot_path = os.path.join(self.temp_dir, f"telegram_{hash(url)}.png")
-                    if self._capture_telegram_app_window(telegram_screenshot_path):
-                        entry['telegram_screenshot_path'] = telegram_screenshot_path
+            if self.capture_with_pyautogui and telegram_prompt_opened and self.interact_with_telegram:
+                telegram_screenshot_path = self._screenshot_path(url, "telegram")
+                if self._capture_telegram_app_window(telegram_screenshot_path):
+                    entry['telegram_screenshot_path'] = telegram_screenshot_path
 
-                # --- Text Extraction ---
-                logger.debug("Extracting structured text blocks...")
-                text_blocks = await self._collect_text_blocks(page)
+            # --- Text Extraction ---
+            logger.debug("Extracting structured text blocks...")
+            text_blocks = await self._collect_text_blocks(page)
 
-                if text_blocks:
-                    if self.use_llm:
-                        logger.debug("Filtering blocks through the LLM...")
-                        filtered_blocks = await self._filter_blocks_with_llm(text_blocks, entry.get("title"))
-                    else:
-                        filtered_blocks = [block['text'] for block in text_blocks]
-
-                    extracted_text = "\n\n".join(block for block in filtered_blocks if block)
-                    entry['text_blocks'] = filtered_blocks
+            if text_blocks:
+                if self.use_llm:
+                    logger.debug("Filtering blocks through the LLM...")
+                    filtered_blocks = await self._filter_blocks_with_llm(text_blocks, entry.get("title"))
                 else:
-                    logger.debug("Falling back to raw HTML text extraction.")
-                    content_html = await page.content()
-                    soup = BeautifulSoup(content_html, 'html.parser')
-                    
-                    for script in soup(["script", "style", "nav", "footer"]):
-                        script.extract()
+                    filtered_blocks = [block['text'] for block in text_blocks]
 
-                    raw_text = soup.get_text(separator='\n')
-                    lines = (line.strip() for line in raw_text.splitlines())
-                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                    extracted_text = '\n'.join(chunk for chunk in chunks if chunk)
-                    entry['text_blocks'] = [raw_text]
+                extracted_text = "\n\n".join(block for block in filtered_blocks if block)
+                entry['text_blocks'] = filtered_blocks
+            else:
+                logger.debug("Falling back to raw HTML text extraction.")
+                content_html = await page.content()
+                soup = BeautifulSoup(content_html, 'html.parser')
                 
-                entry['screenshot_path'] = screenshot_path
-                entry['full_text'] = extracted_text
-                entry['status'] = 'success'
-                logger.info(f"Successfully processed {url}")
+                for script in soup(["script", "style", "nav", "footer"]):
+                    script.extract()
 
-            except Exception as e:
-                logger.error(f"❌ Error scraping {url}: {e}")
-                entry['status'] = 'failed'
-                entry['error'] = str(e)
+                raw_text = soup.get_text(separator='\n')
+                lines = (line.strip() for line in raw_text.splitlines())
+                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                extracted_text = '\n'.join(chunk for chunk in chunks if chunk)
+                entry['text_blocks'] = [raw_text]
             
-            finally:
-                if context:
-                    await context.close()
-                if browser:
-                    await browser.close()
+            entry['screenshot_path'] = screenshot_path
+            entry['full_text'] = extracted_text
+            entry['status'] = 'success'
+            logger.info(f"Successfully processed {url}")
+
+        except Exception as e:
+            logger.error(f"❌ Error scraping {url}: {e}")
+            entry['status'] = 'failed'
+            entry['error'] = str(e)
+        
+        finally:
+            try:
+                await page.close()
+            except Exception as exc:
+                logger.debug(f"Error closing page: {exc}")
         
         return entry
