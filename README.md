@@ -25,6 +25,7 @@ uv run playwright install chromium
   - `--extension-path` / `EXTENSION_PATH` and `--extension-flag` / `EXTENSION_FLAGS` (optional; validated)
   - `--max-tasks` / `MAX_TASKS` (limit for test runs)
   - `--preview` / `PREVIEW_MODE` and `--preview-output` / `PREVIEW_OUTPUT`
+  - LLM (off by default): `--use-local-llm` / `USE_LOCAL_LLM`, `--llm-base-url` / `LLM_BASE_URL` (defaulted to localhost when enabled), `--llm-api-key` / `LLM_API_KEY`, `--llm-timeout` / `LLM_TIMEOUT` (seconds, default 20). Enabling LLM sends extracted text snippets to your specified endpoint.
 
 ### Run
 ```bash
