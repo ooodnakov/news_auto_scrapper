@@ -34,5 +34,7 @@ uv run main.py
 Outputs go to `OUTPUT_FILE` plus screenshots in `temp_screenshots/`.
 
 ### Notes
+- Screenshot files are cleaned at startup and named with a URL slug + hash to avoid collisions.
 - Cookie banners: scraper tries a basic “Accept/Принять” click but some sites may still show overlays.
 - Telegram links: controlled by `INTERACT_WITH_TELEGRAM`; disable if you don’t want app switching.
+- A single browser/context is reused across URLs during a run; close happens automatically when the script exits.
